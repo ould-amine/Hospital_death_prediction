@@ -1,0 +1,474 @@
+---
+title: "New_Project"
+output: html_document
+date: "2024-11-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Chargement du dataset et preprocessing
+
+```{r}
+data = read.csv(file="support2.csv", sep=",", header=TRUE)
+head(data)
+```
+
+
+```{r}
+summary(data)
+```
+
+```{=tex}
+La variable revenu "income" est sous forme de chaîne de caractère, on souhaite la transformer en variable factorielle (permet d'attribuer une matrice de coeffs selon la valeur)
+```
+
+
+```{r}
+data$death = factor(data$death)
+data$hospdead = factor(data$hospdead)
+data$sex = factor(data$sex)
+data$dzgroup = factor(data$dzgroup)
+data$dzclass = factor(data$dzclass)
+#data$num.co = factor(data$num.co)
+data$income = factor(data$income)
+data$race = factor(data$race)
+#data$hday = factor(data$hday)
+data$diabetes = factor(data$diabetes)
+data$dementia = factor(data$dementia)
+data$ca = factor(data$ca)
+data$dnr = factor(data$dnr)
+data$sfdm2 = factor(data$sfdm2)
+head(data)
+```
+
+```{=tex}
+Dzgroup est un sous ensemble de Dzclass, on décide de ne garder que que Dzgroup car cette variable contient plus d'infomrations
+```
+
+
+```{=tex}
+Certaines variables présentent des valeurs manquantes: leur traitement va se faire au cas par cas. Certaines valeurs par défaut (7 colonnes) sont fournies sur le Kaggle, on les utilisera. Pour les autres variables tout dépendra du nombre de valeurs manquantes: on peut utiliser un modèle prédictif en prenant cette variable avec des valeurs manquantes comme variable cible, on peut alors déterminer les coefficients de la régression linéaire qui vont permettre d'estimer les valeurs manquantes. Mais le pb est qu'il faut prendre les lignes qui n'ont aucune valeur manquante: il y en a que 300.
+
+Par la méthode des moindres carrés, la moyenne n'a pas d'influence, la première idée peut être de remplacer les valeurs manquantes d'une colonne par la moyenne sur le reste des valeurs présentes. On vérifie que le modèle linéaire associé est satisfaisant (étude R2 et AIC, résidus). On pourra dans un second temps tester avec la méthode linéaire expliqué plus haut pour voir s'il y a de grandes différences dans les résultats.
+```
+
+
+```{r}
+data[data == ""] = NA
+data[is.na(data$alb), "alb"] = 3.5
+data[is.na(data$pafi), "pafi"] = 333.3
+data[is.na(data$bili), "bili"] = 1.01
+data[is.na(data$crea), "crea"] = 1.01
+data[is.na(data$bun), "bun"] = 6.51
+data[is.na(data$wblc), "wblc"] = 9
+data[is.na(data$urine), "urine"] = 2502
+data
+```
+
+```{=tex}
+Certaines variables ont été estimé par des modèles, on décide de ne pas les prendre en compte et de les retirer du dataset. Ceci car dans leur formation même il y a déjà une incertitude et une erreur.
+```
+
+
+```{r}
+data = data[, !(names(data) %in% c("aps", "sps", "surv2m", "surv6m", "prg2m", "prg6m", "scoma", "dnr", "dnrday"))]
+data
+```
+
+```{=tex}
+On vérifie le pourcentage de valeurs manquantes pour chaque colonne
+```
+
+```{r}
+nombre_na_par_colonne <- sapply(data, function(x) sum(is.na(x)))
+print(nombre_na_par_colonne)
+```
+
+```{r}
+percent_na_by_col <- sapply(data, function(x) sum(is.na(x))*100/length(x))
+percent_na_by_col <- sapply(percent_na_by_col, function(x) round(x,2))
+print(percent_na_by_col)
+```
+
+```{=tex}
+Une première approche peut être de supprimer les colonnes présentant des NA, regarder les résultats que donnent alors le modèle. Cela donnera un résulat de référence pour les autres modèles. En ajoutant une par une les variables supprimées (et alors en supprimant les lignes où il y a des NA) on peut comparer les résultats.
+On décide de supprimer les colonnes présentant plus de 20% de valeurs manquantes
+```
+
+```{r}
+threshold = 0.3 # On fixe le seuil limite de NA à 30%
+# Suppression des colonnes qui dépassent le seuil de NA
+data_clean = data[, colSums(is.na(data))/nrow(data) <= threshold]
+```
+
+```{r}
+nombre_na_par_colonne <- sapply(data_clean, function(x) sum(is.na(x)))
+print(nombre_na_par_colonne)
+```
+```{=tex}
+Pour les colonnes restantes, on remplace les valeurs manquantes.
+Pour les variables numériques on remplace par la moyenne
+Pour les variables catégorielles, on remplace par la valeur la plus présente
+```
+
+
+```{r}
+library(dplyr)
+
+# Fonction pour remplacer les valeurs NA par la moyenne (numérique) ou le mode (catégorique)
+replace_na <- function(df) {
+  for (col in names(df)) {
+    if (is.numeric(df[[col]])) {
+      # Remplacement des NA par la moyenne pour les colonnes numériques
+      df[[col]][is.na(df[[col]])] <- mean(df[[col]], na.rm = TRUE)
+    } else {
+      # Remplacement des NA par le mode pour les colonnes catégorielles ou string
+      mode_value <- names(sort(table(df[[col]]), decreasing = TRUE))[1]
+      df[[col]][is.na(df[[col]])] <- mode_value
+    }
+  }
+  return(df)
+}
+
+
+library(dplyr) # Chargement de la librairie dplyr
+# Remplacement des valeurs manquantes dans le dataset
+data_clean <- replace_na(data_clean)
+```
+
+```{r}
+nombre_na_par_colonne <- sapply(data_clean, function(x) sum(is.na(x)))
+print(nombre_na_par_colonne)
+```
+
+```{r}
+data_clean = na.omit(data_clean)
+data_clean
+```
+
+```{=tex}
+On retire les variables "slos" et "d.time" car elles amènent de la colinéarité
+```
+
+```{r}
+data_clean = data_clean[, !(names(data_clean) %in% c("slos", "d.time"))]
+data_clean
+```
+
+```{=tex}
+On vérifie que la target ne contient bien que des 0 et 1, le format attendu
+```
+
+```{r}
+unique(data_clean$hospdead)
+str(data_clean$hospdead)
+```
+
+
+
+
+```{r}
+# on retire la variable death pour ne pas avoir de conflit avec hospdead
+data_clean <- data_clean[, !(names(data_clean) %in% c("death"))]
+# modèle complet
+mod_log <- glm(hospdead ~ . , data_clean, family = "binomial")
+```
+
+```{r}
+summary(mod_log)
+```
+
+
+## Échantillonnage
+
+```{r}
+# On échantillonne en gardant 80% des observations pour l'entraînement et les 20% restants pour le test
+sample<-sample(c(TRUE,FALSE),nrow(data_clean),replace=TRUE,prob=c(0.8,0.2))
+df_train <- data_clean[sample,]
+df_test <- data_clean[!sample,]
+```
+
+
+```{=tex}
+On vérifie la répartition de la variable cible dans les deux datasets après le split
+```
+
+```{r}
+# Afficher la répartition des valeurs de la variable hospdead
+table(df_train$hospdead)
+```
+
+```{r}
+# Afficher la répartition des valeurs de la variable hospdead
+table(df_test$hospdead)
+```
+
+```{=tex}
+On obtient une répartition égale entre les deux datasets
+```
+
+```{r}
+# jeu train et test avec toutes les variables factorielles transformées en binaire
+# sans la variable cible
+x_train <- model.matrix(hospdead ~ . -1 , data = df_train)
+x_test <- model.matrix(hospdead ~ . -1 , data = df_test)
+```
+
+
+## Régression logistique
+
+```{=tex}
+On calcule l'accuracy du modèle logistique
+```
+
+```{r}
+# modèle complet
+mod_log_train <- glm(hospdead ~ . , df_train, family = "binomial")
+```
+
+```{r}
+# estimations des probabilités de la variable cible
+pred_probs_glm <- predict(mod_log_train, newdata = df_test, type = "response")
+
+# transformations des probabilités en prédictions binaires (0 ou 1)
+pred_classes_glm <- ifelse(pred_probs_glm > 0.5, 1, 0)
+# stockage des prédictions et probas dans un dataframe
+result_glm <- cbind.data.frame(pred_probs_glm, pred_classes_glm)
+colnames(result_glm) <- c("Probabilités", "Prédictions")
+```
+
+```{r}
+# créations des matrices de confusions
+conf_matrix_glm <- addmargins(table(Prédictions = pred_classes_glm, Réalité = df_test$hospdead))
+# affichage matrice de confusion ridge
+print(conf_matrix_glm)
+```
+```{r}
+# Calcul de l'accuracy
+(conf_matrix_glm[1,1] + conf_matrix_glm[2,2])/(conf_matrix_glm[1,1] + conf_matrix_glm[1,2] + conf_matrix_glm[2,1] + conf_matrix_glm[2,2])
+```
+
+
+## Régression pas à pas
+
+```{r}
+resfull<-glm(hospdead~.,data=df_train,family=binomial);
+res1<-glm(hospdead~1,data=df_train,family=binomial);
+resforward<-step(res1,list(upper=resfull),direction='forward')
+pred = predict.glm(resforward,newdata = df_test,type = "response")
+predict = ifelse(pred > 0.5, 1, 0)
+conf_matrix <- table(Predicted = predict, Actual = df_test$hospdead)
+accuracy = sum(diag(conf_matrix)) / sum(conf_matrix)
+accuracy
+```
+
+
+```{r}
+res<-glm(hospdead~.,data=df_train,family=binomial);
+resbackward<-step(res,direction='backward')
+pred = predict.glm(resbackward,newdata = df_test,type = "response")
+predict = ifelse(pred > 0.5, 1, 0)
+conf_matrix <- table(Predicted = predict, Actual = df_test$hospdead)
+accuracy = sum(diag(conf_matrix)) / sum(conf_matrix)
+accuracy
+```
+
+
+```{r}
+resfull<-glm(hospdead~.,data=df_train,family=binomial);
+res1<-glm(hospdead~1,data=df_train,family=binomial);
+resstep<-step(res1,list(upper=resfull),direction='both')
+pred = predict.glm(resstep,newdata = df_test,type = "response")
+predict = ifelse(pred > 0.5, 1, 0)
+conf_matrix <- table(Predicted = predict, Actual = df_test$hospdead)
+accuracy = sum(diag(conf_matrix)) / sum(conf_matrix)
+accuracy
+```
+
+
+## Modèles Ridge et Lasso
+
+```{r}
+library(Matrix)
+library(glmnet)
+
+# ajustement du modèle ridge
+mod_ridge <- glmnet(x = x_train , y = df_train$hospdead, family = "binomial", alpha = 0)
+# ajustement du modèle lasso
+mod_lasso <- glmnet(x = x_train, y = df_train$hospdead, family = "binomial", alpha = 1)
+# pour avoir les coefficients de chaque variable par régression
+# pour chacun des 100 lambdas pris
+## coef.glmnet(mod_ridge)
+## coef.glmnet(mod_lasso)
+```
+
+
+```{r}
+# graphiques des coefficients en fonction des log des lambdas
+par(mfrow = c(1,2))
+plot(mod_ridge, xvar = "lambda", main = "RIDGE", cex.main = 0.8)
+plot(mod_lasso, xvar = "lambda", main = "LASSO", cex.main = 0.8)
+```
+
+```{=tex}
+On calcule le lambda optimal pour chaque méthode
+```
+
+```{r}
+# on prend 10 k folds, le nombre de folds par défaut
+# cross validation ridge
+cv_ridge <- cv.glmnet(x = x_train, y = df_train$hospdead, family = "binomial", alpha = 0)
+# lambda optimal ridge
+best_lambda_ridge <- cv_ridge$lambda.min
+cat("Lambda optimal ridge :", best_lambda_ridge, "\n")
+```
+
+```{r}
+# cross validation lasso
+cv_lasso <- cv.glmnet(x = x_train, y = df_train$hospdead, family = "binomial", alpha = 1)
+# lambda optimal lasso
+best_lambda_lasso <- cv_lasso$lambda.min
+cat("Lambda optimal lasso :", best_lambda_lasso, "\n")
+```
+
+```{r}
+# graphiques déviance binomiale en fonction des log lambda
+# droite pointillé bleue correspond au lambda optimal
+par(mfrow = c(1,2))
+# pour la cross validation ridge
+plot(cv_ridge, main = "RIDGE")
+abline(v = log(best_lambda_ridge), col = "blue", lty = 2, lwd = 2)
+# pour la cross validation lasso
+plot(cv_lasso, main = "LASSO")
+abline(v = log(best_lambda_lasso), col = "blue", lty = 2, lwd = 2)
+```
+
+```{r}
+# estimations des probabilités de la variable cible
+pred_probs_ridge <- predict(mod_ridge, newx = x_test, s = best_lambda_ridge, type = "response")
+pred_probs_lasso <- predict(mod_lasso, newx = x_test, s = best_lambda_lasso, type = "response")
+
+# transformations des probabilités en prédictions binaires (0 ou 1)
+pred_classes_ridge <- ifelse(pred_probs_ridge > 0.5, 1, 0)
+pred_classes_lasso <- ifelse(pred_probs_lasso > 0.5, 1, 0)
+# stockage des prédictions et probas dans un dataframe
+result_ridge <- cbind.data.frame(pred_probs_ridge, pred_classes_ridge)
+colnames(result_ridge) <- c("Probabilités", "Prédictions")
+result_lasso <- cbind.data.frame(pred_probs_lasso, pred_classes_lasso)
+colnames(result_lasso) <- c("Probabilités", "Prédictions")
+```
+
+
+```{r}
+# Création d'une fonction pour afficher plusieurs métriques d'évaluation
+evaluate_model <- function(actual, predicted) {
+  confusion_matrix <- table(Prédiction = predicted, Réalité = actual) 
+  accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix) 
+  precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2]) 
+  recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ]) 
+  f1_score <- 2 * (precision * recall) / (precision + recall) 
+  specificity = confusion_matrix[1,1] / sum(confusion_matrix[,1])
+  
+  cat("Précision :", precision, "\n") 
+  cat("Rappel :", recall, "\n")
+  cat("F-mesure :", f1_score, "\n") 
+  cat("Exactitude (Accuracy) :", accuracy, "\n") 
+  cat("Spécificité :", specificity, "\n")
+  
+  return(confusion_matrix) }
+# Utilisation de la fonction
+cat("\n", "RIDGE", "\n")
+```
+
+
+```{r}
+eval_ridge <- evaluate_model(df_test$hospdead, pred_classes_ridge)
+```
+
+```{r}
+cat("\n", "LASSO", "\n")
+```
+
+```{r}
+eval_lasso <- evaluate_model(df_test$hospdead, pred_classes_lasso)
+```
+
+
+```{r}
+# créations des matrices de confusions
+conf_matrix_ridge <- addmargins(table(Prédictions = pred_classes_ridge, Réalité = df_test$hospdead))
+conf_matrix_lasso <- addmargins(table(Prédictions = pred_classes_lasso, Réalité = df_test$hospdead))
+# affichage matrice de confusion ridge
+cat("\n", "RIDGE", "\n")
+```
+
+```{r}
+print(conf_matrix_ridge)
+```
+
+```{r}
+# affichage matrice de confusion lasso
+cat("\n", "LASSO", "\n")
+```
+
+```{r}
+print(conf_matrix_lasso)
+```
+
+
+```{r}
+library(ROCR)
+
+pred_ridge <- prediction(pred_probs_ridge, df_test$hospdead)
+pred_lasso <- prediction(pred_probs_lasso, df_test$hospdead)
+# AUC
+auc_ridge <- performance(pred_ridge, "auc")@y.values[[1]]
+cat("RIDGE - AUC sur l'ensemble de test :", auc_ridge, "\n")
+```
+
+```{r}
+auc_lasso <- performance(pred_lasso, "auc")@y.values[[1]]
+cat("LASSO - AUC sur l'ensemble de test :", auc_lasso, "\n")
+```
+
+```{r}
+roc_perf_lasso <- performance(pred_lasso, measure="tpr", x.measure="fpr")
+# courbe ROC
+plot(roc_perf_lasso, colorize = TRUE, main = "LASSO - Courbe ROC", print.cutoffs.at = seq(0, 1,by = 0.1))
+```
+
+```{=tex}
+Le seuil $0.5$ est donc le meilleur compromis entre sensibilité (recall) et précision
+```
+
+
+## Extension - arbre de classification
+
+```{r}
+install.packages("rpart.plot")
+```
+
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+# Choix des variables pertinentes
+selected_vars <- c("age", "dzgroup", "avtisst", "sfdm2", "bili") 
+# Création d'un sous-ensemble avec les variables sélectionnées
+subset_data <- data[, c(selected_vars, "hospdead")] # Construction de l'arbre de classification
+tree_model <- rpart(hospdead ~ ., data = subset_data, method = "class")
+
+options(repr.plot.width = 12, repr.plot.height = 8)
+par(mar = c(1, 1, 1, 1)) # Réduire les marges
+
+# Visualisation de l'arbre avec des informations détaillées
+rpart.plot(tree_model, extra = 101, under = TRUE, type = 2, fallen.leaves = TRUE)
+```
+
+```{r}
+summary(tree_model)
+```
+
